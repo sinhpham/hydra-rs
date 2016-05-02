@@ -13,17 +13,20 @@ use syntax::codemap::*;
 use syntax::errors::*;
 use syntax::parse::{self, token, ParseSess};
 use syntax::visit::*;
+use syntax::attr::AttrMetaMethods;
 
 enum Status {
     Done,
     Todo
 }
 
+#[repr(C)]
 struct TodoItem {
     status: Status,
     content: String
 }
 
+#[repr(C)]
 pub struct ViewModel {
     new_item_content: String,
     items: Vec<TodoItem>
@@ -109,31 +112,36 @@ struct HydraVisitor {
 }
 
 impl<'v> Visitor<'v> for HydraVisitor {
-    fn visit_fn(&mut self,
-        fn_kind: FnKind<'v>,
-        fn_decl: &'v FnDecl,
-        _: &'v Block,
-        _: Span,
-        _: NodeId) {
-
-        match fn_kind {
-            FnKind::ItemFn(ident, generics, unsafety, constness, abi, vis) => {
-                if abi == syntax::abi::Abi::C && *vis == syntax::ast::Visibility::Public {
-                    println!("fn ident = {}", ident);
-                    
-                    self.process_rust_func(&*ident.name.as_str(), fn_decl);
+    fn visit_item(&mut self, item: &'v Item) {
+        match item.node {
+            ItemKind::Fn(ref declaration, unsafety, constness, abi, ref generics, ref body) => {
+                let is_c_abi = abi == syntax::abi::Abi::C;
+                let is_public = item.vis == syntax::ast::Visibility::Public;
+                let is_no_mangle = syntax::attr::contains_name(&item.attrs, "no_mangle");
+                
+                if is_c_abi && is_public && is_no_mangle {
+                    self.process_rust_func(&*item.ident.name.as_str(), declaration);
                 }
             }
-            _ => (),
+            ItemKind::Struct(ref struct_definition, ref generics) => {
+                let is_rep_c = item.attrs.iter().find(|at| at.check_name("repr")).map_or(false, |i| {
+                    if let Some(l) = i.meta_item_list() {
+                        syntax::attr::contains_name(l, "C")
+                    } else {
+                        false
+                    }
+                });
+                
+                if is_rep_c {
+                    println!("struct def {:?}", &*item.ident.name.as_str());
+                    if let VariantData::Struct(ref x, ref y) = *struct_definition {
+                        println!("x = {:?}", x);
+                    }
+                }
+            }
+            _ => ()
         };
     }
-    
-    // fn visit_attribute(&mut self, attr: &'v Attribute) {
-    //     println!("ty = {:?}", attr);
-        
-    //     let s = self.codemap.span_to_snippet(attr.span);
-    //     println!("s_string = {:?}", s);
-    // }
 }
 
 impl HydraVisitor {
